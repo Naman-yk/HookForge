@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -10,4 +5,136 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// --------------------
+// ENUMS
+// --------------------
+
+enum DeliveryStatus {
+  PENDING
+  PROCESSING
+  DELIVERED
+  RETRYING
+  DEAD_LETTER
+}
+
+// --------------------
+// ORGANIZATION
+// --------------------
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  endpoints Endpoint[]
+  events    Event[]
+}
+
+// --------------------
+// ENDPOINT
+// --------------------
+
+model Endpoint {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+
+  name          String
+  url           String
+  signingSecret String
+  isActive      Boolean  @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  deliveryJobs DeliveryJob[]
+
+  @@index([organizationId])
+  @@index([organizationId, isActive])
+}
+
+// --------------------
+// EVENT
+// --------------------
+
+model Event {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+
+  eventType      String
+  payload        Json
+  idempotencyKey String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  deliveryJobs DeliveryJob[]
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, createdAt])
+  @@index([eventType])
+}
+
+// --------------------
+// DELIVERY JOB
+// --------------------
+
+model DeliveryJob {
+  id           String         @id @default(uuid()) @db.Uuid
+  eventId      String         @db.Uuid
+  endpointId   String         @db.Uuid
+
+  status       DeliveryStatus @default(PENDING)
+
+  attemptCount Int @default(0)
+  maxAttempts  Int @default(8)
+
+  availableAt DateTime @default(now()) @db.Timestamptz(3)
+
+  lockedAt DateTime? @db.Timestamptz(3)
+  lockedBy String?
+
+  lastError String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  endpoint Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  attempts DeliveryAttempt[]
+
+  @@unique([eventId, endpointId])
+  @@index([status, availableAt])
+  @@index([endpointId, createdAt])
+}
+
+// --------------------
+// DELIVERY ATTEMPT
+// --------------------
+
+model DeliveryAttempt {
+  id            String @id @default(uuid()) @db.Uuid
+  deliveryJobId String @db.Uuid
+
+  attemptNumber Int
+
+  statusCode   Int?
+  responseBody String?
+  errorMessage String?
+
+  durationMs Int?
+
+  startedAt   DateTime  @default(now()) @db.Timestamptz(3)
+  completedAt DateTime? @db.Timestamptz(3)
+
+  deliveryJob DeliveryJob @relation(fields: [deliveryJobId], references: [id], onDelete: Cascade)
+
+  @@unique([deliveryJobId, attemptNumber])
+  @@index([deliveryJobId, startedAt])
 }
