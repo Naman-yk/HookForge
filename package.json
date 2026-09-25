@@ -22,10 +22,12 @@
   },
   "homepage": "https://github.com/Naman-yk/HookForge#readme",
   "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "dotenv": "^18.0.3",
     "express": "^5.2.1",
     "ioredis": "^6.0.0",
+    "pg": "^8.23.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
