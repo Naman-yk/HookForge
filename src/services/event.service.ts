@@ -33,6 +33,8 @@ export async function createEvent({
         if (existingEvent) {
             return {
                 event: existingEvent,
+                deliveryJobs: existingEvent.deliveryJobs,
+
                 duplicate: true,
             };
         }
@@ -65,7 +67,7 @@ export async function createEvent({
 
         const deliveryJobs = await Promise.all(
             endpoints.map((endpoint) => {
-                tx.deliveryJob.create({
+                return tx.deliveryJob.create({
                     data: {
                         eventId: event.id,
                         endpointId: endpoint.id,

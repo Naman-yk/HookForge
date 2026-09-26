@@ -19,7 +19,20 @@ router.post(
 
             const input = createEventSchema.parse(req.body);
 
-            const organizationId = req.organizationId;
+            const organizationId = req.organizationId || (req as any).organizationId;
+
+
+
+            if (!organizationId) {
+                return res.status(401).json({
+                    error: {
+                        code: "MISSING_ORGANISATION",
+                        message: "Organization ID is required",
+                    },
+                });
+            }
+
+
 
             const idempotencyKey = req.header("Idempotency-Key") ?? undefined;
 

@@ -7,7 +7,7 @@ export interface AuthenticatedRequest extends Request {
 }
 
 
-export function requireOrganization(
+export async function requireOrganization(
     req: AuthenticatedRequest,
     res: Response,
     next: NextFunction
@@ -15,7 +15,7 @@ export function requireOrganization(
 
     try {
 
-        const organizationId = req.header("X-Organizztion-Id");
+        const organizationId = req.header("X-Organization-Id");
 
         if (!organizationId) {
             return res.status(401).json({
