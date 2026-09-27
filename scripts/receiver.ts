@@ -30,8 +30,20 @@ app.post("/webhooks/b", (req, res) => {
     });
 });
 
+app.post("/webhooks/fail", (req, res) => {
+    console.log("Receiver FAIL got:");
+
+    console.log(req.body);
+
+    res.status(500).json({
+        received: false,
+        error: "International failure for testing",
+    });
+});
+
 const PORT = 4089;
 
 app.listen(PORT, () => {
     console.log(`Test server is running on the ${PORT}`);
 });
+

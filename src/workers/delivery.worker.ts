@@ -5,6 +5,10 @@ import { prisma } from "../lib/prisma";
 import { claimNextJob } from "./jobclaim";
 import { resolve } from "node:dns";
 
+import { calculateRetryDelay } from "./retry.policy";
+
+import { isRetryableStatus } from "./retry.classifier";
+
 
 const WORKER_ID = `worker-${randomUUID()}`;
 
@@ -87,6 +91,51 @@ async function deliverJob(jobId: string) {
             },
         });
 
+
+        const retryable = isRetryableStatus(response.status);
+
+        const nextAttemptNumber = job.attemptCount + 1;
+
+        const attemptsExhausted = nextAttemptNumber >= job.maxAttempts;
+
+        let nextStatus: "DELIVERED" | "RETRYING" | "DEAD_LETTER";
+
+        let nextAvailableAt = new Date();
+
+        let lastError: string | null = null;
+
+        if (response.ok) {
+            nextStatus = "DELIVERED";
+            lastError = null;
+        } else if (!retryable) {
+            nextStatus = "DEAD_LETTER";
+            lastError = `Receiver returned non-returnable HTTP ${response.status}`;
+
+        } else if (attemptsExhausted) {
+            nextStatus = "DEAD_LETTER";
+            lastError = `Maximum delivery attempts (${job.maxAttempts}) exceeded`;
+
+        } else {
+
+            nextStatus = "RETRYING";
+
+            const delay = calculateRetryDelay(nextAttemptNumber);
+
+            nextAvailableAt = new Date(
+                Date.now() + delay
+            );
+
+            lastError = `Receiver returned retyable HTTP ${response.status}`;
+
+            console.log(
+                `[${WORKER_ID}] Job ${job.id} will retry in ${delay}ms`
+            );
+
+        }
+
+
+
+
         await prisma.deliveryJob.update({
             where: {
                 id: job.id,
@@ -96,14 +145,14 @@ async function deliverJob(jobId: string) {
                     increment: 1,
                 },
 
-                status: response.ok ? "DELIVERED" : "RETRYING",
+                status: nextStatus,
 
-                lastError: response.ok ? null : `Receiver returned HTTP ${response.status}`,
+                lastError,
 
                 lockedAt: null,
                 lockedBy: null,
 
-                availableAt: response.ok ? new Date() : new Date(Date.now() + 60_000),
+                availableAt: nextAvailableAt,
             },
         });
 
@@ -131,6 +180,18 @@ async function deliverJob(jobId: string) {
             },
         });
 
+        const nextAttemptNumber = job.attemptCount + 1;
+
+        const attemptsExhausted = nextAttemptNumber >= job.maxAttempts;
+
+        const delay = calculateRetryDelay(nextAttemptNumber);
+
+        const nextStatus = attemptsExhausted ? "DEAD_LETTER" : "RETRYING";
+
+        const nextAvailableAt = attemptsExhausted ? new Date() : new Date(
+            Date.now() + delay
+        );
+
         await prisma.deliveryJob.update({
             where: {
                 id: job.id,
@@ -141,7 +202,8 @@ async function deliverJob(jobId: string) {
                     increment: 1,
                 },
 
-                status: "RETRYING",
+                status: nextStatus,
+
 
                 lastError: message,
 
@@ -155,10 +217,22 @@ async function deliverJob(jobId: string) {
             },
         });
 
-        console.error(
-            `[${WORKER_ID}] Job ${job.id} failed: ${message}`
+        if (attemptsExhausted) {
+            console.error(
+                `[${WORKER_ID}] Job ${job.id} ` +
+                `moved to DEAD_LETTER after ` +
+                `${nextAttemptNumber} attempts`
+            );
+        } else {
+            console.error(
+                `[${WORKER_ID}] Job ${job.id} ` +
+                `failed: ${message}. ` +
+                `Retrying in ${delay}ms`
+            );
 
-        );
+        }
+
+
     } finally {
         clearTimeout(timeout);
     }

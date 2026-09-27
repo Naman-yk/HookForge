@@ -1,11 +1,17 @@
 import express from "express";
 import eventRoutes from "./routes/event.routes";
 
+import deliveryRoutes from "./routes/delivery.routes";
+
+
+
 const app = express();
 
 app.use(express.json({
     limit: "1mb",
 }));
+
+app.use("/v1/deliveries", deliveryRoutes);
 
 
 app.get("/health", (_req, res) => {
