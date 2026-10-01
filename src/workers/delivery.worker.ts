@@ -1,3 +1,8 @@
+
+// we are going to make deiverJobs() return normally while runWorker() maintains a set of active jobs 
+// like our goal is to set concurrency so our workers don't work on more than 5 jobs at a time
+
+
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "../lib/prisma";
@@ -8,6 +13,10 @@ import { resolve } from "node:dns";
 import { calculateRetryDelay } from "./retry.policy";
 
 import { isRetryableStatus } from "./retry.classifier";
+
+import { startLeaseRefresh } from "./job.lease-manager";
+
+import { WORKER_CONFIG } from "./worker.config";
 
 
 const WORKER_ID = `worker-${randomUUID()}`;
@@ -34,6 +43,9 @@ async function deliverJob(jobId: string) {
 
     }
 
+    const stopLeaseRefresh = startLeaseRefresh(job.id, WORKER_ID);
+
+
     const startedAt = new Date();
 
     const attempt = await prisma.deliveryAttempt.create({
@@ -51,7 +63,7 @@ async function deliverJob(jobId: string) {
         controller.abort();
 
 
-    }, DELIVERY_TIMEOUT_MS);
+    }, WORKER_CONFIG.deliveryTimeoutMs);
 
     try {
         const response = await fetch(job.endpoint.url, {
@@ -235,6 +247,8 @@ async function deliverJob(jobId: string) {
 
     } finally {
         clearTimeout(timeout);
+
+        stopLeaseRefresh();
     }
 
 
@@ -243,28 +257,54 @@ async function deliverJob(jobId: string) {
 async function runWorker() {
     console.log(`🚚 ${WORKER_ID} started`);
 
+    const activeJobs = new Set<Promise<void>>();
+
     while (true) {
         try {
-            const job = await claimNextJob(WORKER_ID);
+            while (activeJobs.size < WORKER_CONFIG.maxConcurrency) {
 
-            if (!job) {
-                await new Promise((resolve) =>
-                    setTimeout(resolve, POLL_INTERVAL_MS)
-                );
+                const job = await claimNextJob(WORKER_ID);
 
-                continue;
+                if (!job) {
+                    break;
+                }
+
+                const jobPromise = deliverJob(job.id).catch((error) => {
+                    console.error(`[${WORKER_ID}] Job ${job.id} crashed:`, error);
+
+
+                }).finally(() => {
+                    activeJobs.delete(jobPromise);
+
+                });
+                activeJobs.add(jobPromise);
+
+
             }
 
-            await deliverJob(job.id);
+            if (activeJobs.size === 0) {
+                await new Promise((resolve) =>
+                    setTimeout(resolve, WORKER_CONFIG.pollIntervalMs)
+                );
+                continue;
+            }
+            await Promise.race(activeJobs);
+
         } catch (error) {
             console.error(`[${WORKER_ID}] Worker error:`, error);
 
             await new Promise((resolve) =>
-                setTimeout(resolve, POLL_INTERVAL_MS)
+                setTimeout(resolve, WORKER_CONFIG.pollIntervalMs)
+
             );
+
         }
     }
+
+
+
 }
+
 
 runWorker()
     .catch((error) => {
